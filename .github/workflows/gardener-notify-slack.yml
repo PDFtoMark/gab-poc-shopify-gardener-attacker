@@ -1,0 +1,59 @@
+name: Gardener - Notify Slack
+on:
+  workflow_run:
+    workflows: ['Gardener - Notify Event']
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  notify:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download event payload
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gardener-event
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Echo untrusted payload
+        if: steps.download.outcome == 'success'
+        run: |
+          echo "--- artifact contents ---"
+          cat event.json
+
+      - name: Add devtools-gardener label to Dependabot PR
+        if: steps.download.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ACTION=$(jq -r '.action' event.json)
+          LOGIN=$(jq -r '.pull_request.user.login // ""' event.json)
+          if [ "$ACTION" != "opened" ] || [ "$LOGIN" != "dependabot[bot]" ]; then
+            exit 0
+          fi
+          NUMBER=$(jq -r '.pull_request.number' event.json)
+          gh pr edit "$NUMBER" --add-label devtools-gardener
+
+      - name: Render Slack payload (no token used)
+        if: steps.download.outcome == 'success'
+        run: |
+          jq '
+            def escape: gsub("&";"&amp;") | gsub("<";"&lt;") | gsub(">";"&gt;");
+            (.issue // .pull_request) as $i
+            | { channel: "CHANNEL",
+                text: "<\($i.html_url)|\($i.title | escape)>",
+                unfurl_links: false,
+                unfurl_media: false }
+          ' event.json | tee /tmp/slack-payload.json
+          echo "--- rendered text ---"
+          jq -r '.text' /tmp/slack-payload.json
